@@ -5,13 +5,72 @@ import { tool } from "@langchain/core/tools";
 import { MessagesAnnotation, StateGraph } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import z from "zod"
-import { menuData } from "./dummydata.js";
+import connectDB from "./models/connectDB.js";
+import Category from "./models/CategoryModel.js";
+import Product from "./models/ProductModel.js";
+
 configDotenv()
+await connectDB()
+
 const llm=new ChatOpenAI({
   apiKey:process.env.OPEN_AI_API_KEY,
   modelName:"gpt-4o-mini"
 })
 // Define tools
+
+const getCategories = tool(
+  async () => {
+    try {
+      const categories = await Category.find().select('name'); 
+      return JSON.stringify(categories); 
+    } catch (error) {
+      return `Error: ${error.message}`; 
+    }
+  },
+  {
+    name: 'getCategories',
+    description: 'Return the list of available eating options (categories).',
+    schema: {},
+  }
+);
+
+const getProductsByCategory = tool(
+  async ({ categoryName }) => {
+    try {
+      const category = await Category.findOne({ name: categoryName }).exec();
+      if (!category) {
+        return `Error: Category "${categoryName}" not found. Please check the spelling or choose from the available categories (Shawarma, Pizza, Burgers, Drinks).`;
+      }
+
+      // Fetch products for the matched category
+      const products = await Product.find({ category: category._id }).select('name description price');
+      if (products.length === 0) {
+        return `No products found for the "${categoryName}" category.`; // No products in the category
+      }
+
+      return JSON.stringify(products); // Return products as JSON string
+    } catch (error) {
+      return `Error: ${error.message}`; // Handle any other errors
+    }
+  },
+  {
+    name: 'getProductsByCategory',
+    description: 'Return all products available under a specific category (eating option).',
+    schema: {
+      type: 'object',
+      properties: {
+        categoryName: {
+          type: 'string',
+          enum: ['Shawarma', 'Pizza', 'Burgers', 'Drinks'],
+          description: 'The category name to fetch products for.',
+        },
+      },
+      required: ['categoryName'], 
+    },
+  }
+);
+
+
 const multiply = tool(
   async ({ a, b }) => {
     return a * b;
@@ -54,20 +113,11 @@ const divide = tool(
   }
 );
 
-const getMenu = tool(
-  async () => {
-    return JSON.stringify(menuData);
-  },
-  {
-    name: "get_menu",
-    description: "Fetch the list of available fast food menu items.",
-    parameters: z.object({})
-  }
-);
 
 
 
-const tools = [add, multiply, divide,getMenu];
+
+const tools = [getCategories,getProductsByCategory,add, multiply, divide];
 const toolsByName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
 const llmWithTools = llm.bindTools(tools);
 
@@ -124,15 +174,9 @@ const agentBuilder = new StateGraph(MessagesAnnotation)
 // Invoke
 const messages = [{
   role: "user",
-  content: "Add 2 numbers?"
+  content: "How much is the price of Margarita Pizza"
 },
-{
-  role:"ai",
-  content:"Kindly give 2 number you want to add"
-},{
-  role:"user",
-  content:"its 4 and 5"
-}];
+];
 
 const result = await agentBuilder.invoke({ messages });
 console.log("final response",result.messages[result.messages.length-1]);
